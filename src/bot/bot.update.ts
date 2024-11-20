@@ -44,7 +44,9 @@ export class BotUpdate {
          // ctx.session.options.groupStatus = chatMember['custom_title'] || 'Листья'
          if (status === 'member' || status === 'administrator' || status === 'creator') {
             const existUser = await this.usersService.addNew(user)
-            await this.usersService.updateStatus(existUser.id, chatMember['custom_title'] || 'Листья')
+            await this.usersService.updateStatus(
+               existUser.id, chatMember['custom_title'] || existUser?.name
+            )
 
             ctx.session.userId = existUser.id
 
@@ -99,6 +101,7 @@ export class BotUpdate {
    async notify(@Ctx() ctx: Context) {
       const userTgId = ctx.update['callback_query'].from.id
       const { status } = await this.usersService.findById(userTgId)
+      console.log(status)
       const chatId = process.env.GROUP_ID;
       const threadId = 33471
       const currentSelected = await this.getDefaultOptions()
