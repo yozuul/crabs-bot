@@ -98,8 +98,14 @@ export class BotUpdate {
    @Action('notify_all')
    async notify(@Ctx() ctx: Context) {
       const userTgId = ctx.update['callback_query'].from.id
-      const { status } = await this.usersService.findById(userTgId)
-      console.log(status)
+      let { status } = await this.usersService.findById(userTgId)
+      if(!status) {
+         const user = this.getUserData(ctx.message)
+         const groupId = process.env.GROUP_ID
+         const userId = user.tgId
+         const chatMember = await this.bot.telegram.getChatMember(groupId, userId);
+         status = chatMember.status
+      }
       const chatId = process.env.GROUP_ID;
       const threadId = 33471
       const currentSelected = await this.getDefaultOptions()

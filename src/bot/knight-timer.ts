@@ -9,19 +9,59 @@ export class KnightsBotService {
    private buttonState = new Map<string, number>();
    private keyboardUpdateRunning = false;
    private keyboardUpdateInterval: NodeJS.Timeout | null = null;
+   private initUsers = [];
 
-   @Hears('knight')
+   @Hears('knights_timer')
    async knights(@Ctx() ctx: Context) {
-      this.generateKeyboard(ctx);
+      await this.generateKeyboard(ctx);
+   }
+
+   async sendNotify(ctx: Context, buttonId: string) {
+      let messageText = ''
+
+      if(buttonId.includes('bridge')) {
+         messageText = 'Мост скоро респ'
+      }
+      if(buttonId.includes('only_second')) {
+         messageText = 'Двойка скоро респ'
+      }
+      if(buttonId.includes('only_kamen')) {
+         messageText = 'Камень скоро респ'
+      }
+      if(buttonId.includes('only_four')) {
+         messageText = 'Четвёрка скоро респ'
+      }
+      if(buttonId.includes('only_five')) {
+         messageText = 'Пятёрка скоро респ'
+      }
+      if(buttonId.includes('_one')) {
+         messageText += ' / 1 пачка'
+      }
+      if(buttonId.includes('_two')) {
+         messageText += ' / 2 пачка'
+      }
+      if(buttonId.includes('_three')) {
+         messageText += ' / 3 пачка'
+      }
+
+      for (let userId of this.initUsers) {
+         try {
+            await ctx.telegram.sendMessage(userId, messageText);
+         } catch (error) {
+            console.log('error')
+         }
+      }
    }
 
    @Action(/all_(.+)/)
    async allQuery(@Ctx() ctx: Context) {
       let data = ctx.callbackQuery['data'];
       if (data) {
-         // Получаем все кнопки в строке, связанной с данным действием
          this.setTimersForAllButtons(data, ctx);
          await ctx.answerCbQuery('Таймеры запущены');
+      }
+      if (!this.initUsers.includes(ctx.from.id)) {
+         this.initUsers.push(ctx.from.id);
       }
    }
 
@@ -32,59 +72,55 @@ export class KnightsBotService {
          this.startTimerForButton(data, ctx);
          await ctx.answerCbQuery('Таймер запущен');
       }
+      if (!this.initUsers.includes(ctx.from.id)) {
+         this.initUsers.push(ctx.from.id);
+      }
    }
 
-   @Action('null')
-   async nullClick(@Ctx() ctx: Context) {
-      await ctx.answerCbQuery('Выбери таймер');
-   }
-
-   // Функция для сброса таймеров для всех кнопок в строке
    setTimersForAllButtons(buttonId: string, @Ctx() ctx: Context) {
       const rowButtons = this.keyboardText.flat().filter(button => button.callback_data.startsWith('only_' + buttonId.split('_')[1]));
       rowButtons.forEach(button => {
-         this.startTimerForButton(button.callback_data, ctx);  // Таймеры для всех кнопок в строке
+         this.startTimerForButton(button.callback_data, ctx);
       });
    }
 
    async startTimerForButton(buttonId: string, @Ctx() ctx: Context | null) {
-      // Если для кнопки уже есть таймер, останавливаем его
       if (this.timers.has(buttonId)) {
          clearInterval(this.timers.get(buttonId));
          this.timers.delete(buttonId);
          this.buttonState.delete(buttonId);
       }
 
-      // Начинаем отсчёт от 10:00 (600 секунд)
-      let currentTime = 600; // 10 минут
+      let currentTime = 600;
       this.buttonState.set(buttonId, currentTime);
 
       const interval = setInterval(async () => {
-         currentTime -= 10; // уменьшаем на 10 секунд
+         currentTime -= 10;
          this.buttonState.set(buttonId, currentTime);
 
-         // Если время дошло до 0, сбрасываем таймер
+         if (currentTime === 60 && ctx) {
+            await this.sendNotify(ctx, buttonId);
+         }
+
          if (currentTime <= 0) {
-            this.buttonState.set(buttonId, 600); // Сбрасываем на 10 минут
+            this.buttonState.set(buttonId, 600);
             clearInterval(interval);
             this.timers.delete(buttonId);
          }
 
-         // Обновляем клавиатуру каждые 10 секунд
-         if (ctx) await this.updateKeyboard(ctx);
       }, 10000);
 
-      // Добавляем новый таймер в Map
       this.timers.set(buttonId, interval);
 
-      // Запускаем основной таймер для обновления клавиатуры, если он ещё не работает
       if (!this.keyboardUpdateRunning) {
          this.keyboardUpdateRunning = true;
          this.keyboardUpdateInterval = setInterval(async () => {
+            await this.updateKeyboard(ctx);
             if (this.timers.size === 0) {
                this.keyboardUpdateRunning = false;
                if (this.keyboardUpdateInterval) {
-                  clearInterval(this.keyboardUpdateInterval); // Останавливаем общий таймер
+                  this.initUsers = [];
+                  clearInterval(this.keyboardUpdateInterval);
                }
             }
          }, 10000);
@@ -94,21 +130,24 @@ export class KnightsBotService {
    async updateKeyboard(@Ctx() ctx: Context) {
       const updatedKeyboard = this.keyboardText.map(row => row.map(button => {
          if (this.buttonState.has(button.callback_data)) {
-            // Если для кнопки есть таймер, обновляем её текст
             const currentTime = this.buttonState.get(button.callback_data) || 0;
             const minutes = Math.floor(currentTime / 60).toString().padStart(2, '0');
             const seconds = (currentTime % 60).toString().padStart(2, '0');
             button.text = `${minutes}:${seconds}`;
          } else if (button.text === '10:00') {
-            // Оставляем кнопки с '10:00' без изменений
             button.text = '10:00';
          }
          return button;
       }));
 
-      await ctx.editMessageReplyMarkup({
-         inline_keyboard: updatedKeyboard,
-      });
+      try {
+         await ctx.editMessageReplyMarkup({
+            inline_keyboard: updatedKeyboard,
+         });
+      } catch (error) {
+         console.log('error');
+         console.log(error)
+      }
    }
 
    async generateKeyboard(ctx) {
@@ -122,46 +161,47 @@ export class KnightsBotService {
    get keyboardText() {
       return [
          [
-            { text: 'МОСТ', callback_data: 'null' }
+            { text: '🔄 МОСТ', callback_data: 'all_bridge' }
          ],
          [
-            { text: '🔄', callback_data: 'all_bridge' },
             { text: '10:00', callback_data: 'only_bridge_one' },
             { text: "10:00", callback_data: 'only_bridge_two' },
             { text: "10:00", callback_data: 'only_bridge_three' },
          ],
          [
-            { text: 'ДВОЙКА', callback_data: 'null' }
+            { text: '🔄 ДВОЙКА', callback_data: 'all_second' }
          ],
          [
-            { text: '🔄', callback_data: 'all_two' },
-            { text: '10:00', callback_data: 'only_two_one' },
-            { text: "10:00", callback_data: 'only_two_two' },
-            { text: "10:00", callback_data: 'only_two_three' },
+            { text: '10:00', callback_data: 'only_second_one' },
+            { text: "10:00", callback_data: 'only_second_two' },
+            { text: "10:00", callback_data: 'only_second_three' },
          ],
          [
-            { text: 'КАМЕНЬ', callback_data: 'null' },
-            // { text: '🔄', callback_data: 'all_kamen' },
+            { text: '🔄 КАМЕНЬ', callback_data: 'all_kamen' },
+         ],
+         [
             { text: '10:00', callback_data: 'only_kamen_one' },
          ],
          [
-            { text: 'ЧЕТВЁРКА', callback_data: 'null' }
+            { text: '🔄 ЧЕТВЁРКА', callback_data: 'all_four' }
          ],
          [
-            { text: '🔄', callback_data: 'all_four' },
             { text: '10:00', callback_data: 'only_four_one' },
             { text: "10:00", callback_data: 'only_four_two' },
             { text: "10:00", callback_data: 'only_four_three' },
          ],
          [
-            { text: 'ПЯТЁРКА', callback_data: 'null' }
+            { text: '🔄 ПЯТЁРКА', callback_data: 'all_five' }
          ],
          [
-            { text: '🔄', callback_data: 'all_five' },
             { text: '10:00', callback_data: 'only_five_one' },
             { text: "10:00", callback_data: 'only_five_two' },
-            { text: "10:00", callback_data: 'only_five_three' },
          ]
-      ]
+      ];
+   }
+
+   @Action('null')
+   async nullClick(@Ctx() ctx: Context) {
+      await ctx.answerCbQuery('Выбери таймер');
    }
 }
